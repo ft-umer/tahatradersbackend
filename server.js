@@ -8,6 +8,7 @@ import customerRoutes from './routes/customer.js';
 import transactionRoutes from './routes/transactions.js';
 import ledgerRoutes from './routes/ledger.js';
 import storeRoutes from './routes/store.js';
+import expenseRoutes from './routes/expense.js';
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.use('/api/transactions', transactionRoutes);
 app.use('/api/customers', customerRoutes);
 app.use("/api/ledger", ledgerRoutes);
 app.use('/api/store', storeRoutes);
+app.use('/api/expenses', expenseRoutes);
 
 
 app.listen(process.env.PORT, () => {

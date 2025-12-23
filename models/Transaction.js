@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 const transactionSchema = new mongoose.Schema({
-  type: { type: String, enum: ["sale", "payment"], required: true },
+  type: { type: String, enum: ["sale", "payment","return"], required: true },
   invoiceNo: { type: String },
   items: [
     {
