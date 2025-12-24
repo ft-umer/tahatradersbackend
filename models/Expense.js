@@ -5,8 +5,8 @@ const expenseSchema = new mongoose.Schema(
     title: { type: String, required: true },
     category: {
       type: String,
-      enum: ['Guests', 'Office', 'Food', 'Misc'],
       required: true,
+      trim: true,
     },
     amount: { type: Number, required: true },
     note: { type: String },
