@@ -13,7 +13,7 @@ export const getProducts = async (req, res) => {
 
 export const addProduct = async (req, res) => {
   try {
-    const { name, category, price, stock,sku } = req.body;
+    const { name, category, price, stock,sku,costPrice } = req.body;
 
     let imageUrl = "";
 
@@ -32,6 +32,7 @@ export const addProduct = async (req, res) => {
       name,
       category,
       price,
+      costPrice,
       stock,
       image: imageUrl,
       sku
@@ -52,12 +53,13 @@ export const updateProduct = async (req, res) => {
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    const { name, category, price, stock,sku } = req.body;
+    const { name, category, price, stock,sku,costPrice } = req.body;
     product.name = name || product.name;
     product.category = category || product.category;
     product.price = price ?? product.price;
     product.stock = stock ?? product.stock;
     product.sku = sku ?? product.sku;
+    product.costPrice = costPrice ?? product.costPrice;
 
     if (req.file) {
       const result = await new Promise((resolve, reject) => {

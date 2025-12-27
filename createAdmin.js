@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
-      dbName: 'clothingPOS',
+      dbName: 'traders',
     })
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error(err));

@@ -1,6 +1,8 @@
 import express from "express";
 import Transaction from "../models/Transaction.js";
 import Product from "../models/Product.js";
+import Return from "../models/Return.js";
+
 
 // Helper to generate invoice numbers
 function generateInvoiceNo() {
@@ -130,6 +132,27 @@ export const getTransactions = async (req, res) => {
   }
 };
 
+export const getReturns = async (req, res) => {
+  try {
+  const returns = await Return.find()
+  .populate({
+    path: "user",
+    select: "name phone" // original buyer info
+  })
+  .populate({
+    path: "items.product",
+    select: "name price"
+  })
+  .sort({ createdAt: -1 });
+
+res.json({ success: true, returns });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 export const updateTransaction = async (req, res) => {
   try {
     const { id } = req.params;
@@ -170,83 +193,84 @@ export const updateTransaction = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 export const returnTransaction = async (req, res) => {
   try {
-    const { originalTransactionId, items = [] } = req.body;
+    const { originalTransactionId, items = [], refundAmount, fullReturn } = req.body;
 
-    const originalTx = await Transaction.findById(originalTransactionId);
-    if (!originalTx)
-      return res.status(404).json({ message: "Original transaction not found" });
+    const originalTx = await Transaction.findById(originalTransactionId).populate('items.product customer');
+    if (!originalTx) return res.status(404).json({ message: "Original transaction not found" });
 
-    // Loop through each returned item
-    for (let returnedItem of items) {
-      const soldItem = originalTx.items.find(
-        i => i.product.toString() === returnedItem.product
-      );
+    // Map items for return
+    const returnItems = [];
 
-      if (!soldItem)
-        return res.status(400).json({
-          message: `Product not found in original sale: ${returnedItem.product}`
-        });
+    for (let ri of items) {
+      // Find sold item in original transaction
+      const soldItem = originalTx.items.find(i => {
+        const originalId = i.product?._id ? i.product._id.toString() : i.product.toString();
+        const returnId = ri.product.toString(); // frontend ID as string
+        return originalId === returnId;
+      });
 
-      if (returnedItem.quantity > soldItem.quantity)
-        return res.status(400).json({
-          message: `Return quantity cannot exceed sold quantity`
-        });
+      if (!soldItem) {
+        console.log("OriginalTx items IDs:", originalTx.items.map(i => i.product?._id?.toString() || i.product.toString()));
+        console.log("Returned item ID:", ri.product);
+        throw new Error(`Product ${ri.product} not found in original sale`);
+      }
 
-      // Decrease sold quantity
-      soldItem.quantity -= returnedItem.quantity;
+      // Save item with price
+      returnItems.push({
+        product: ri.product,
+        quantity: ri.quantity,
+        price: soldItem.price,
+      });
 
-      // Restore product stock
-      await Product.findByIdAndUpdate(
-        returnedItem.product,
-        { $inc: { stock: returnedItem.quantity } }
-      );
+      // Reduce quantity in original transaction
+      soldItem.quantity -= ri.quantity;
+
+      // Restore stock
+      await Product.findByIdAndUpdate(ri.product, { $inc: { stock: ri.quantity } });
     }
 
-    // Remove items with zero quantity
+    // Remove items with 0 quantity
     originalTx.items = originalTx.items.filter(i => i.quantity > 0);
 
-    // 🔥 IF ALL ITEMS RETURNED → DELETE TRANSACTION
-    if (originalTx.items.length === 0) {
-      await Transaction.findByIdAndDelete(originalTransactionId);
-
-      return res.status(200).json({
-        success: true,
-        message: "All items returned. Transaction deleted."
-      });
-    }
-
-    // Recalculate total
-    originalTx.total = originalTx.items.reduce(
-      (sum, i) => sum + i.price * i.quantity,
-      0
-    );
-
-    // Update debit / credit
+    // Recalculate totals
+    originalTx.total = originalTx.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
     if (originalTx.paymentMethod === "cash") {
       originalTx.debit = originalTx.total;
       originalTx.credit = 0;
-    }
-
-    if (originalTx.paymentMethod === "credit") {
+    } else {
       originalTx.credit = originalTx.total;
       originalTx.debit = 0;
     }
 
     await originalTx.save();
 
+    // Save return record
+    const returnRecord = await Return.create({
+      originalTransactionId,
+      items: returnItems,
+      customer: originalTx.customer || null, // now saves name + phone
+      refundAmount,
+      fullReturn,
+      user: originalTx.customer?._id || null,
+    });
+
     res.status(200).json({
       success: true,
-      transaction: originalTx
+      message: fullReturn ? "Full return processed" : "Partial return processed",
+      returnRecord,
+      refundAmount,
+      fullReturn,
     });
 
   } catch (err) {
-    console.error("Return Transaction Update Error:", err);
-    res.status(500).json({ message: "Server error" });
+    console.error("Return Transaction Error:", err);
+    res.status(500).json({ message: err.message || "Server error" });
   }
 };
+
+
 
 
 // DELETE TRANSACTION
