@@ -1,4 +1,5 @@
 import express from "express";
+import Transaction from "../models/Transaction.schema.js";
 import TransactionPrimary from "../models/Transaction.primary.js";
 import TransactionSecondary from "../models/Transaction.secondary.js";
 import Product from "../models/Product.js";
