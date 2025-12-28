@@ -11,11 +11,11 @@ export const connectDB = async () => {
   }
 };
 
-export const connectDB2 = async () => {
-  try {
-    await mongoose.createConnection(process.env.MONGODB_URI2);
-    console.log("Secondary DB connected");
-  } catch (err) {
-    console.error("Secondary DB connection error:", err);
-  }
-};
+// ✅ STORE SECONDARY CONNECTION
+export const secondaryConnection = mongoose.createConnection(
+  process.env.MONGODB_URI2
+);
+
+secondaryConnection.on("connected", () => {
+  console.log("Secondary DB connected");
+});

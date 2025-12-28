@@ -1,8 +1,8 @@
 import express from "express";
-import Transaction from "../models/Transaction.js";
+import TransactionPrimary from "../models/Transaction.primary.js";
+import TransactionSecondary from "../models/Transaction.secondary.js";
 import Product from "../models/Product.js";
 import Return from "../models/Return.js";
-
 
 // Helper to generate invoice numbers
 function generateInvoiceNo() {
@@ -94,7 +94,7 @@ export const createTransaction = async (req, res) => {
       finalCredit = credit || 0;
     }
 
-    const newTransaction = await Transaction.create({
+    const transactionData = {
       type,
       invoiceNo: type === "sale" ? generateInvoiceNo() : undefined,
       items,
@@ -104,7 +104,13 @@ export const createTransaction = async (req, res) => {
       customer,
       debit: finalDebit || 0,
       credit: finalCredit || 0,
-    });
+    };
+
+    // PRIMARY SAVE
+    const newTransaction = await TransactionPrimary.create(transactionData);
+
+    // SECONDARY SAVE (no response dependency)
+    await TransactionSecondary.create(transactionData);
 
     res.status(201).json({ success: true, transaction: newTransaction });
   } catch (error) {
@@ -112,6 +118,24 @@ export const createTransaction = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
+export const getSecondaryTransactions = async (req, res) => {
+  try {
+    const transactions = await TransactionSecondary.find()
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      source: "secondary-db",
+      count: transactions.length,
+      transactions,
+    });
+  } catch (err) {
+    console.error("Secondary fetch error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 
 // GET TRANSACTIONS
 export const getTransactions = async (req, res) => {
@@ -134,19 +158,18 @@ export const getTransactions = async (req, res) => {
 
 export const getReturns = async (req, res) => {
   try {
-  const returns = await Return.find()
-  .populate({
-    path: "user",
-    select: "name phone" // original buyer info
-  })
-  .populate({
-    path: "items.product",
-    select: "name price"
-  })
-  .sort({ createdAt: -1 });
+    const returns = await Return.find()
+      .populate({
+        path: "user",
+        select: "name phone", // original buyer info
+      })
+      .populate({
+        path: "items.product",
+        select: "name price",
+      })
+      .sort({ createdAt: -1 });
 
-res.json({ success: true, returns });
-
+    res.json({ success: true, returns });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -195,24 +218,41 @@ export const updateTransaction = async (req, res) => {
 };
 export const returnTransaction = async (req, res) => {
   try {
-    const { originalTransactionId, items = [], refundAmount, fullReturn } = req.body;
+    const {
+      originalTransactionId,
+      items = [],
+      refundAmount,
+      fullReturn,
+    } = req.body;
 
-    const originalTx = await Transaction.findById(originalTransactionId).populate('items.product customer');
-    if (!originalTx) return res.status(404).json({ message: "Original transaction not found" });
+    const originalTx = await Transaction.findById(
+      originalTransactionId
+    ).populate("items.product customer");
+    if (!originalTx)
+      return res
+        .status(404)
+        .json({ message: "Original transaction not found" });
 
     // Map items for return
     const returnItems = [];
 
     for (let ri of items) {
       // Find sold item in original transaction
-      const soldItem = originalTx.items.find(i => {
-        const originalId = i.product?._id ? i.product._id.toString() : i.product.toString();
+      const soldItem = originalTx.items.find((i) => {
+        const originalId = i.product?._id
+          ? i.product._id.toString()
+          : i.product.toString();
         const returnId = ri.product.toString(); // frontend ID as string
         return originalId === returnId;
       });
 
       if (!soldItem) {
-        console.log("OriginalTx items IDs:", originalTx.items.map(i => i.product?._id?.toString() || i.product.toString()));
+        console.log(
+          "OriginalTx items IDs:",
+          originalTx.items.map(
+            (i) => i.product?._id?.toString() || i.product.toString()
+          )
+        );
         console.log("Returned item ID:", ri.product);
         throw new Error(`Product ${ri.product} not found in original sale`);
       }
@@ -228,14 +268,19 @@ export const returnTransaction = async (req, res) => {
       soldItem.quantity -= ri.quantity;
 
       // Restore stock
-      await Product.findByIdAndUpdate(ri.product, { $inc: { stock: ri.quantity } });
+      await Product.findByIdAndUpdate(ri.product, {
+        $inc: { stock: ri.quantity },
+      });
     }
 
     // Remove items with 0 quantity
-    originalTx.items = originalTx.items.filter(i => i.quantity > 0);
+    originalTx.items = originalTx.items.filter((i) => i.quantity > 0);
 
     // Recalculate totals
-    originalTx.total = originalTx.items.reduce((sum, i) => sum + i.price * i.quantity, 0);
+    originalTx.total = originalTx.items.reduce(
+      (sum, i) => sum + i.price * i.quantity,
+      0
+    );
     if (originalTx.paymentMethod === "cash") {
       originalTx.debit = originalTx.total;
       originalTx.credit = 0;
@@ -258,20 +303,18 @@ export const returnTransaction = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: fullReturn ? "Full return processed" : "Partial return processed",
+      message: fullReturn
+        ? "Full return processed"
+        : "Partial return processed",
       returnRecord,
       refundAmount,
       fullReturn,
     });
-
   } catch (err) {
     console.error("Return Transaction Error:", err);
     res.status(500).json({ message: err.message || "Server error" });
   }
 };
-
-
-
 
 // DELETE TRANSACTION
 export const deleteTransaction = async (req, res) => {

@@ -1,5 +1,5 @@
 import express from "express";
-import Transaction from "../models/Transaction.js";
+import Transaction from "../models/Transaction.schema.js";
 import PDFDocument from "pdfkit";
 
 const router = express.Router();
