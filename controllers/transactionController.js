@@ -1,5 +1,4 @@
 import express from "express";
-import Transaction from "../models/Transaction.schema.js";
 import TransactionPrimary from "../models/Transaction.primary.js";
 import TransactionSecondary from "../models/Transaction.secondary.js";
 import Product from "../models/Product.js";
@@ -141,8 +140,8 @@ export const getSecondaryTransactions = async (req, res) => {
 // GET TRANSACTIONS
 export const getTransactions = async (req, res) => {
   try {
-    const transactions = await Transaction.find()
-      .populate({ path: "items.product", select: "name price image sku" })
+    const transactions = await TransactionPrimary.find()
+      .populate({ path: "items.product", select: "name price costPrice image sku" })
       .populate({ path: "user", select: "name email" })
       .sort({ createdAt: -1 });
 

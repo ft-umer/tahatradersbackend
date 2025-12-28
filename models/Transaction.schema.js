@@ -1,26 +1,48 @@
 import mongoose from "mongoose";
 
-const transactionSchema = new mongoose.Schema(
-  {
-    type: { type: String, enum: ["sale", "payment", "return"], required: true },
-    invoiceNo: String,
-    originalTransactionId: { type: mongoose.Schema.Types.ObjectId },
-    items: [
-      {
-        product: mongoose.Schema.Types.ObjectId,
-        quantity: Number,
-        price: Number,
-      },
-    ],
-    total: Number,
-    refundAmount: Number,
-    fullReturn: Boolean,
-    paymentMethod: String,
-    customer: Object,
-    debit: Number,
-    credit: Number,
-    user: mongoose.Schema.Types.ObjectId,
+const transactionSchema = new mongoose.Schema({
+  type: {
+    type: String,
+    enum: ["sale", "payment", "return"],
+    required: true,
   },
+
+  invoiceNo: { type: String },
+
+  // 🔗 LINK TO ORIGINAL SALE (FOR RETURNS)
+  originalTransactionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Transaction",
+  },
+
+  items: [
+    {
+      product: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+      quantity: Number,
+      price: Number,
+    },
+  ],
+
+  total: { type: Number, required: true },
+
+  // 💰 RETURN-SPECIFIC FIELDS
+  refundAmount: { type: Number, default: 0 },
+  fullReturn: { type: Boolean, default: false },
+
+  paymentMethod: { type: String },
+
+  customer: {
+    id: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
+    name: { type: String, required: true },
+    phone: { type: String, required: true },
+    address: String,
+  },
+
+  debit: { type: Number, default: 0 },
+  credit: { type: Number, default: 0 },
+
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+},
   { timestamps: true }
 );
 
