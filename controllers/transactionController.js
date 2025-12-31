@@ -1,6 +1,5 @@
 import express from "express";
-import TransactionPrimary from "../models/Transaction.primary.js";
-import TransactionSecondary from "../models/Transaction.secondary.js";
+import Transaction from "../models/Transaction.js";
 import Product from "../models/Product.js";
 import Return from "../models/Return.js";
 
@@ -12,7 +11,15 @@ function generateInvoiceNo() {
 // CREATE TRANSACTION
 export const createTransaction = async (req, res) => {
   try {
-    const { items = [], paymentMethod, customer, debit, credit } = req.body;
+    const {
+      items = [],
+      paymentMethod: pm, // rename to avoid const reassignment
+      customer,
+      debit,
+      credit,
+      cash,
+      online,
+    } = req.body;
     const userId = req.user._id;
 
     if (!customer || !customer.name || !customer.phone) {
@@ -24,93 +31,112 @@ export const createTransaction = async (req, res) => {
     const type = items.length > 0 ? "sale" : "payment";
     let total = 0;
 
+    let finalDebit = 0;
+    let finalCredit = 0;
+    let finalCash = 0;
+    let finalOnline = 0;
+    let finalPaymentMethod = pm; // use a separate variable for saving
+
+    // ================= SALE =================
     if (type === "sale") {
-      // Calculate total and validate stock
-      for (let item of items) {
+      for (const item of items) {
         const product = await Product.findById(item.product);
         if (!product)
           return res
             .status(404)
             .json({ message: `Product not found: ${item.product}` });
-        if (product.stock < item.quantity)
-          return res
-            .status(400)
-            .json({ message: `Insufficient stock for ${product.name}` });
-        total += product.price * item.quantity;
-        item.price = product.price; // store price at sale
+
+        if (product.stock < item.quantity) {
+          return res.status(400).json({
+            message: `Insufficient stock for ${product.name}. Available: ${product.stock}`,
+          });
+        }
+
+        const unitPrice = item.price ?? product.price;
+        const itemTotal = item.total ?? unitPrice * item.quantity;
+
+        item.price = unitPrice;
+        item.total = itemTotal;
+
+        total += itemTotal;
       }
 
       // Deduct stock
-      for (let item of items) {
+      for (const item of items) {
         await Product.findByIdAndUpdate(item.product, {
           $inc: { stock: -item.quantity },
         });
       }
-    } else {
-      // For payment-only transactions, total comes from debit/credit
-      total = (debit || 0) - (credit || 0);
+
+      // ================= PAYMENT LOGIC =================
+      if (pm === "split") {
+        const cashVal = cash || 0;
+        const onlineVal = online || 0;
+        const creditVal = credit || 0;
+
+        const sum = cashVal + onlineVal + creditVal;
+        if (sum !== total) {
+          return res.status(400).json({
+            message: "Cash + Online + Credit must equal total",
+          });
+        }
+
+        finalCash = cashVal;
+        finalOnline = onlineVal;
+        finalDebit = cashVal + onlineVal;
+        finalCredit = creditVal;
+
+        finalPaymentMethod = "split";
+      } else if (pm === "cash") {
+        finalCash = total;
+        finalDebit = total;
+        finalCredit = 0;
+        finalOnline = 0;
+      } else if (pm === "online") {
+        finalOnline = total;
+        finalDebit = total;
+        finalCash = 0;
+        finalCredit = 0;
+      } else if (pm === "credit") {
+        finalCredit = total;
+        finalDebit = 0;
+        finalCash = 0;
+        finalOnline = 0;
+      }
+    }
+
+    // ================= PAYMENT ONLY =================
+    else {
+      if ((debit || 0) > 0 && (credit || 0) > 0) {
+        return res
+          .status(400)
+          .json({ message: "Debit and credit cannot both be greater than 0" });
+      }
+
+      total = debit > 0 ? debit : credit;
       if (total <= 0)
         return res
           .status(400)
           .json({ message: "Payment total must be greater than 0" });
-    }
 
-    let finalDebit = 0;
-    let finalCredit = 0;
-
-    if (type === "sale") {
-      for (let item of items) {
-        const product = await Product.findById(item.product);
-        if (!product) throw new Error("Product not found");
-        if (product.stock < item.quantity)
-          throw new Error("Insufficient stock");
-
-        item.price = product.price;
-        total += product.price * item.quantity;
-      }
-
-      // deduct stock
-      for (let item of items) {
-        await Product.findByIdAndUpdate(item.product, {
-          $inc: { stock: -item.quantity },
-        });
-      }
-
-      if (paymentMethod === "credit") {
-        finalCredit = total; // customer owes
-      } else {
-        finalDebit = total; // cash/bank
-      }
-    } else {
-      // payment only
-      if ((debit || 0) > 0 && (credit || 0) > 0) {
-        return res.status(400).json({
-          message: "Debit and credit cannot both be greater than 0",
-        });
-      }
-
-      total = debit > 0 ? debit : credit;
       finalDebit = debit || 0;
       finalCredit = credit || 0;
+      finalPaymentMethod = debit > 0 ? "cash" : "credit";
     }
 
-    const transactionData = {
+    const newTransaction = await Transaction.create({
       type,
       invoiceNo: type === "sale" ? generateInvoiceNo() : undefined,
       items,
       total,
-      paymentMethod,
+      paymentMethod: finalPaymentMethod, // save correct method
       user: userId,
       customer,
-      debit: finalDebit || 0,
-      credit: finalCredit || 0,
-    };
-
-    // PRIMARY SAVE
-    const newTransaction = await TransactionPrimary.create(transactionData);
-
-    // SECONDARY SAVE (no response dependency)
-    await TransactionSecondary.create(transactionData);
+      debit: finalDebit,
+      credit: finalCredit,
+      cash: finalCash,
+      online: finalOnline,
+    });
 
     res.status(201).json({ success: true, transaction: newTransaction });
   } catch (error) {
@@ -119,19 +145,114 @@ export const createTransaction = async (req, res) => {
   }
 };
 
-export const getSecondaryTransactions = async (req, res) => {
+// UPDATE TRANSACTION
+export const updateTransaction = async (req, res) => {
   try {
-    const transactions = await TransactionSecondary.find()
-      .sort({ createdAt: -1 });
+    const { id } = req.params;
+    const {
+      debit,
+      credit,
+      cash,
+      online,
+      paymentMethod: pm,
+      customer,
+    } = req.body;
 
-    res.status(200).json({
-      success: true,
-      source: "secondary-db",
-      count: transactions.length,
-      transactions,
-    });
-  } catch (err) {
-    console.error("Secondary fetch error:", err);
+    const transaction = await Transaction.findById(id);
+    if (!transaction)
+      return res.status(404).json({ message: "Transaction not found" });
+
+    let finalDebit = 0;
+    let finalCredit = 0;
+    let finalCash = 0;
+    let finalOnline = 0;
+    let finalPaymentMethod = pm; // to save in DB
+
+    // ❌ Prevent invalid accounting
+    if ((debit || 0) > 0 && (credit || 0) > 0) {
+      return res
+        .status(400)
+        .json({ message: "Debit and credit cannot both be greater than 0" });
+    }
+
+    const total = transaction.total;
+
+    if (pm === "split") {
+      const cashVal = cash || 0;
+      const onlineVal = online || 0;
+      const creditVal = credit || 0;
+
+      const sum = cashVal + onlineVal + creditVal;
+      if (sum !== total) {
+        return res.status(400).json({
+          message: "Cash + Online + Credit must equal total",
+        });
+      }
+
+      finalCash = cashVal;
+      finalOnline = onlineVal;
+      finalDebit = cashVal + onlineVal;
+      finalCredit = creditVal;
+
+      finalPaymentMethod = "split";
+    } else if (pm === "cash") {
+      finalCash = total;
+      finalDebit = total;
+      finalOnline = 0;
+      finalCredit = 0;
+    } else if (pm === "online") {
+      finalOnline = total;
+      finalDebit = total;
+      finalCash = 0;
+      finalCredit = 0;
+    } else if (pm === "credit") {
+      finalCredit = total;
+      finalDebit = 0;
+      finalCash = 0;
+      finalOnline = 0;
+    }
+
+    // Update customer info
+    if (customer) {
+      if (customer.name) transaction.customer.name = customer.name;
+      if (customer.phone) transaction.customer.phone = customer.phone;
+      if (customer.address) transaction.customer.address = customer.address;
+    }
+
+    transaction.paymentMethod = finalPaymentMethod;
+    transaction.debit = finalDebit;
+    transaction.credit = finalCredit;
+    transaction.cash = finalCash;
+    transaction.online = finalOnline;
+
+    await transaction.save();
+
+    res.status(200).json({ success: true, transaction });
+  } catch (error) {
+    console.error("Update Transaction Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+// GET SINGLE TRANSACTION BY ID
+export const getTransactionById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const transaction = await Transaction.findById(id)
+      .populate({
+        path: "items.product",
+        select: "name price costPrice image sku",
+      })
+      .populate({ path: "user", select: "name email" });
+
+    if (!transaction) {
+      return res.status(404).json({ message: "Transaction not found" });
+    }
+
+    res.status(200).json(transaction);
+  } catch (error) {
+    console.error("Get Transaction By ID Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -140,8 +261,11 @@ export const getSecondaryTransactions = async (req, res) => {
 // GET TRANSACTIONS
 export const getTransactions = async (req, res) => {
   try {
-    const transactions = await TransactionPrimary.find()
-      .populate({ path: "items.product", select: "name price costPrice image sku" })
+    const transactions = await Transaction.find()
+      .populate({
+        path: "items.product",
+        select: "name price costPrice image sku",
+      })
       .populate({ path: "user", select: "name email" })
       .sort({ createdAt: -1 });
 
@@ -176,46 +300,6 @@ export const getReturns = async (req, res) => {
   }
 };
 
-export const updateTransaction = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { debit, credit, customer } = req.body;
-
-    const transaction = await Transaction.findById(id);
-    if (!transaction) {
-      return res.status(404).json({ message: "Transaction not found" });
-    }
-
-    // ❌ prevent invalid accounting
-    if ((debit || 0) > 0 && (credit || 0) > 0) {
-      return res.status(400).json({
-        message: "Debit and credit cannot both be greater than 0",
-      });
-    }
-
-    // ✅ update only what is allowed
-    if (debit !== undefined) transaction.debit = debit;
-    if (credit !== undefined) transaction.credit = credit;
-
-    if (customer) {
-      if (customer.name) transaction.customer.name = customer.name;
-      if (customer.phone) transaction.customer.phone = customer.phone;
-    }
-
-    // ❌ DO NOT RECALCULATE SALE TOTAL HERE
-    // total should remain original invoice total
-
-    await transaction.save();
-
-    res.status(200).json({
-      success: true,
-      transaction,
-    });
-  } catch (error) {
-    console.error("Update Transaction Error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
-};
 export const returnTransaction = async (req, res) => {
   try {
     const {

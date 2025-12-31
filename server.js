@@ -9,6 +9,9 @@ import transactionRoutes from './routes/transactions.js';
 import ledgerRoutes from './routes/ledger.js';
 import storeRoutes from './routes/store.js';
 import expenseRoutes from './routes/expense.js';
+import unitRoutes from './routes/unit.js';
+import categoryRoutes from './routes/category.js';
+import pinRoutes from './routes/pin.js';
 
 dotenv.config();
 
@@ -25,6 +28,9 @@ app.use('/api/customers', customerRoutes);
 app.use("/api/ledger", ledgerRoutes);
 app.use('/api/store', storeRoutes);
 app.use('/api/expenses', expenseRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/units", unitRoutes);
+app.use("/api/pin", pinRoutes);
 
 
 app.listen(process.env.PORT, () => {

@@ -1,5 +1,5 @@
 import express from "express";
-import Transaction from "../models/Transaction.schema.js";
+import Transaction from "../models/Transaction.js";
 import PDFDocument from "pdfkit";
 
 const router = express.Router();
@@ -62,44 +62,37 @@ router.get("/download/:phone", async (req, res) => {
       ).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     };
 
-    // Map a transaction to ledger row object { dateTime, particulars, debit, credit }
     const mapTransactionToRow = (tx) => {
-      const isSale =
-        tx.type === "sale" || (Array.isArray(tx.items) && tx.items.length > 0);
-      const isPayment =
-        tx.type === "payment" || (!isSale && (tx.total || tx.amount));
+      const isSale = tx.type === "sale";
+      const isPayment = tx.type === "payment";
 
+      let particulars = "";
       let debit = 0;
       let credit = 0;
-      let particulars = "";
 
       if (isSale) {
+        const saleAmount = Number(tx.total) || computeTotalFromItems(tx.items);
+
+        debit = saleAmount;
+
         particulars = tx.invoiceNo
           ? `Sale - Invoice #${tx.invoiceNo}`
           : `Sale - ID ${tx._id.toString().slice(-6)}`;
-
-        if (tx.paymentMethod === "credit") {
-          credit = tx.total ?? computeTotalFromItems(tx.items) ?? 0;
-          debit = 0;
-        } else {
-          debit = tx.total ?? computeTotalFromItems(tx.items) ?? 0;
-          credit = 0;
-        }
       } else if (isPayment) {
+        const paidAmount = Number(tx.amount || tx.total || 0);
+
+        credit = paidAmount;
+
         particulars = `Payment Received - ID ${tx._id.toString().slice(-6)}`;
-        debit = tx.total ?? tx.amount ?? 0; // received payment goes to debit
-        credit = 0;
       } else {
-        particulars = `Txn - ${tx._id.toString().slice(-6)}`;
-        debit = tx.total ?? tx.amount ?? 0;
-        credit = 0;
+        particulars = `Txn - ID ${tx._id.toString().slice(-6)}`;
       }
 
       return {
         dateTime: tx.timestamp || tx.createdAt || "-",
         particulars,
-        debit: Number(debit),
-        credit: Number(credit),
+        debit:tx.debit,
+        credit:tx.credit
       };
     };
 
@@ -227,13 +220,22 @@ router.get("/download/:phone", async (req, res) => {
         totalCredit += r.credit;
       });
       const computedBalance =
-        Number(openingBalance || 0) + totalDebit - totalCredit;
+        Number(openingBalance || 0) + totalCredit;
+
+      const balanceLabel =
+        computedBalance > 0
+          ? "Receivable"
+          : computedBalance < 0
+          ? "Payable"
+          : "Settled";
 
       doc
         .font("Helvetica")
         .fontSize(normalSize)
         .text(
-          `Current Balance: (${formatCurrency(Math.abs(computedBalance))})`,
+          `Current Balance: (${formatCurrency(
+            Math.abs(computedBalance)
+          )}) (${balanceLabel})`,
           rightBoxX + 8,
           headerTop + 24
         );
@@ -301,7 +303,7 @@ router.get("/download/:phone", async (req, res) => {
       const r = rows[i];
 
       // Compute running balance for this row (we need it to show)
-      runningBalance = runningBalance + r.debit - r.credit;
+      runningBalance = runningBalance + r.credit;
 
       // prepare fonts for measurement
       doc.font("Helvetica").fontSize(normalSize);
@@ -444,7 +446,11 @@ router.get("/download/:phone", async (req, res) => {
     doc
       .font("Helvetica-Bold")
       .fontSize(11)
-      .text(`Closing Balance: (${formatCurrency(runningBalance)})`, left, y);
+      .text(
+        `Closing Balance: (${formatCurrency(Math.abs(runningBalance))})`,
+        left,
+        y
+      );
     y += 18;
 
     doc
@@ -469,10 +475,25 @@ router.get("/download/:phone", async (req, res) => {
     // recompute totals for display
     const totalCredit = rows.reduce((s, r) => s + r.credit, 0);
     const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
-    doc.text(`Total Credit Turnover: ${formatCurrency(totalCredit)}`, left, y);
+
+    // 🔴 Credit in RED
+    doc.font("Helvetica-Bold");
+    doc
+      .fillColor("red")
+      .text(`Total Amount Remaining (Credit): ${formatCurrency(totalCredit)}`, left, y);
+
     y += 14;
-    doc.text(`Total Debit Turnover: ${formatCurrency(totalDebit)}`, left, y);
+
+    // 🔁 Reset to GREEN
+    doc.font("Helvetica-Bold");
+    doc
+      .fillColor("green")
+      .text(`Total Amount Paid (Debit): ${formatCurrency(totalDebit)}`, left, y);
+
     y += 18;
+    // 🔁 Reset to BLACK
+    doc.font("Helvetica");
+    doc.fillColor("black");
     doc.text(`Generated on: ${formatDateTime(new Date())}`, left, y);
 
     doc.end();
@@ -507,16 +528,34 @@ router.post("/send", async (req, res) => {
         .status(400)
         .json({ message: "Order ID or Customer phone required" });
     }
+    const txns = await Transaction.find({ "customer.phone": phone });
+    const totalCredit = txns.reduce((s, t) => s + (t.credit || 0), 0);
+    const totalDebit = txns.reduce((s, t) => s + (t.debit || 0), 0);
+    const closingBalance = Number(totalCredit || 0);
 
     const rawPhone = phone.replace(/\D/g, "");
     const waPhone = rawPhone.startsWith("0")
       ? "92" + rawPhone.slice(1)
       : rawPhone;
 
-    const downloadUrl = `http://localhost:5000/api/ledger/download/${encodeURIComponent(
+    const downloadUrl = `https://hb-backend-black.vercel.app/api/ledger/download/${encodeURIComponent(
       phone
     )}`;
-    const message = `Hi ${customerName}, your ledger is ready.\nDownload here: ${downloadUrl}`;
+    const capitalize = (name = "") =>
+      name
+        .toLowerCase()
+        .split(" ")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" ");
+
+    const message =
+      `Assalam u Alaikum ${capitalize(
+        customerName
+      )}, your ledger is ready.\n\n` +
+      `Closing Balance: (${Math.abs(closingBalance).toFixed(2)})\n` +
+      `Total Amount Remaining (Credit): ${totalCredit.toFixed(2)}\n` +
+      `Total Amount Paid (Debit): ${totalDebit.toFixed(2)}\n\n` +
+      `Download here: ${downloadUrl}`;
 
     const waURL = `https://wa.me/${waPhone}?text=${encodeURIComponent(
       message

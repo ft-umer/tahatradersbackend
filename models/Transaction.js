@@ -29,7 +29,15 @@ const transactionSchema = new mongoose.Schema({
   refundAmount: { type: Number, default: 0 },
   fullReturn: { type: Boolean, default: false },
 
-  paymentMethod: { type: String },
+  paymentMethod: { 
+    type: String, 
+    enum: ["cash", "online", "credit", "split"], 
+    required: true 
+  },
+
+  // Split payment fields
+  cash: { type: Number, default: 0 },
+  online: { type: Number, default: 0 },
 
   customer: {
     id: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" },
@@ -42,8 +50,6 @@ const transactionSchema = new mongoose.Schema({
   credit: { type: Number, default: 0 },
 
   user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-},
-  { timestamps: true }
-);
+}, { timestamps: true });
 
-export default transactionSchema;
+export default mongoose.model("Transaction", transactionSchema);

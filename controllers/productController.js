@@ -13,7 +13,7 @@ export const getProducts = async (req, res) => {
 
 export const addProduct = async (req, res) => {
   try {
-    const { name, category, price, stock,sku,costPrice } = req.body;
+    const { name, category, price, stock,sku,costPrice,unit } = req.body;
 
     let imageUrl = "";
 
@@ -35,6 +35,7 @@ export const addProduct = async (req, res) => {
       costPrice,
       stock,
       image: imageUrl,
+      unit,
       sku
     });
 
@@ -53,14 +54,15 @@ export const updateProduct = async (req, res) => {
     const product = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    const { name, category, price, stock,sku,costPrice } = req.body;
+    const { name, category, price, stock,sku,costPrice,unit } = req.body;
     product.name = name || product.name;
     product.category = category || product.category;
     product.price = price ?? product.price;
     product.stock = stock ?? product.stock;
     product.sku = sku ?? product.sku;
     product.costPrice = costPrice ?? product.costPrice;
-
+    product.unit = unit ?? product.unit;
+    
     if (req.file) {
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
