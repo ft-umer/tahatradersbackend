@@ -538,7 +538,7 @@ router.post("/send", async (req, res) => {
       ? "92" + rawPhone.slice(1)
       : rawPhone;
 
-    const downloadUrl = `https://hb-backend-black.vercel.app/api/ledger/download/${encodeURIComponent(
+    const downloadUrl = `https://tahatradersbackend.vercel.app//api/ledger/download/${encodeURIComponent(
       phone
     )}`;
     const capitalize = (name = "") =>
