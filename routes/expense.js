@@ -23,6 +23,19 @@ router.get('/', protect, async (req, res) => {
   res.json(expenses);
 });
 
+router.put('/:id', protect, async (req, res) => {
+  try {
+    const expense = await Expense.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user.id },
+      { ...req.body },
+      { new: true }
+    );
+    res.json(expense);
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 /* DELETE */
 router.delete('/:id', protect, async (req, res) => {
   await Expense.findOneAndDelete({
