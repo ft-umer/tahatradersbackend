@@ -161,11 +161,7 @@ export const updateTransaction = async (req, res) => {
        1️⃣ CREDIT-ONLY UPDATE (frontend Add Credit)
     ------------------------------------------------ */
     if (credit !== undefined && pm === undefined) {
-      if (credit < 0 || credit > total) {
-        return res.status(400).json({
-          message: "Credit must be between 0 and total amount",
-        });
-      }
+     
 
       transaction.credit = credit;
       transaction.debit = total - credit;
