@@ -158,25 +158,20 @@ export const updateTransaction = async (req, res) => {
     const total = transaction.total;
 
     /* ------------------------------------------------
-       1️⃣ CREDIT-ONLY UPDATE (frontend Add Credit)
+       1️⃣ CREDIT-ONLY UPDATE (Frontend Edit Credit)
+       👉 DO NOT TOUCH ANY OTHER FIELD
     ------------------------------------------------ */
-    if (credit !== undefined && pm === undefined) {
-     
+    if (credit !== undefined && pm === undefined && debit === undefined) {
+    
 
       transaction.credit = credit;
-
-      transaction.cash = 0;
-      transaction.online = 0;
-
-      transaction.paymentMethod =
-        credit === total ? "credit" : "split";
 
       await transaction.save();
       return res.json({ success: true, transaction });
     }
 
     /* ------------------------------------------------
-       2️⃣ NORMAL PAYMENT METHOD UPDATE (existing logic)
+       2️⃣ NORMAL PAYMENT METHOD UPDATE
     ------------------------------------------------ */
     let finalDebit = 0;
     let finalCredit = 0;
