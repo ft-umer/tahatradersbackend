@@ -164,7 +164,6 @@ export const updateTransaction = async (req, res) => {
      
 
       transaction.credit = credit;
-      transaction.debit = total - credit;
 
       transaction.cash = 0;
       transaction.online = 0;
