@@ -145,78 +145,75 @@ export const createTransaction = async (req, res) => {
   }
 };
 
-// UPDATE TRANSACTION
 export const updateTransaction = async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      debit,
-      credit,
-      cash,
-      online,
-      paymentMethod: pm,
-      customer,
-    } = req.body;
+    const { credit, debit, paymentMethod: pm, customer } = req.body;
 
     const transaction = await Transaction.findById(id);
-    if (!transaction)
+    if (!transaction) {
       return res.status(404).json({ message: "Transaction not found" });
+    }
 
+    const total = transaction.total;
+
+    /* ------------------------------------------------
+       1️⃣ CREDIT-ONLY UPDATE (frontend Add Credit)
+    ------------------------------------------------ */
+    if (credit !== undefined && pm === undefined) {
+      if (credit < 0 || credit > total) {
+        return res.status(400).json({
+          message: "Credit must be between 0 and total amount",
+        });
+      }
+
+      transaction.credit = credit;
+      transaction.debit = total - credit;
+
+      transaction.cash = 0;
+      transaction.online = 0;
+
+      transaction.paymentMethod =
+        credit === total ? "credit" : "split";
+
+      await transaction.save();
+      return res.json({ success: true, transaction });
+    }
+
+    /* ------------------------------------------------
+       2️⃣ NORMAL PAYMENT METHOD UPDATE (existing logic)
+    ------------------------------------------------ */
     let finalDebit = 0;
     let finalCredit = 0;
     let finalCash = 0;
     let finalOnline = 0;
-    let finalPaymentMethod = pm; // to save in DB
+    let finalPaymentMethod = pm;
 
-    // ❌ Prevent invalid accounting
     if ((debit || 0) > 0 && (credit || 0) > 0) {
       return res
         .status(400)
         .json({ message: "Debit and credit cannot both be greater than 0" });
     }
 
-    const total = transaction.total;
-
-    if (pm === "split") {
-      const cashVal = cash || 0;
-      const onlineVal = online || 0;
-      const creditVal = credit || 0;
-
-      const sum = cashVal + onlineVal + creditVal;
-      if (sum !== total) {
-        return res.status(400).json({
-          message: "Cash + Online + Credit must equal total",
-        });
-      }
-
-      finalCash = cashVal;
-      finalOnline = onlineVal;
-      finalDebit = cashVal + onlineVal;
-      finalCredit = creditVal;
-
-      finalPaymentMethod = "split";
-    } else if (pm === "cash") {
+    if (pm === "cash") {
       finalCash = total;
       finalDebit = total;
-      finalOnline = 0;
-      finalCredit = 0;
     } else if (pm === "online") {
       finalOnline = total;
       finalDebit = total;
-      finalCash = 0;
-      finalCredit = 0;
     } else if (pm === "credit") {
       finalCredit = total;
-      finalDebit = 0;
-      finalCash = 0;
-      finalOnline = 0;
     }
 
-    // Update customer info
+    // Safe customer update
     if (customer) {
-      if (customer.name) transaction.customer.name = customer.name;
-      if (customer.phone) transaction.customer.phone = customer.phone;
-      if (customer.address) transaction.customer.address = customer.address;
+      transaction.customer = transaction.customer || {};
+      if (customer.name !== undefined)
+        transaction.customer.name = customer.name;
+      if (customer.phone !== undefined)
+        transaction.customer.phone = customer.phone;
+      if (customer.address !== undefined)
+        transaction.customer.address = customer.address;
     }
 
     transaction.paymentMethod = finalPaymentMethod;
@@ -226,13 +223,13 @@ export const updateTransaction = async (req, res) => {
     transaction.online = finalOnline;
 
     await transaction.save();
-
-    res.status(200).json({ success: true, transaction });
+    res.json({ success: true, transaction });
   } catch (error) {
     console.error("Update Transaction Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 // GET SINGLE TRANSACTION BY ID
 export const getTransactionById = async (req, res) => {
