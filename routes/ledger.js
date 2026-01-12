@@ -63,36 +63,51 @@ router.get("/download/:phone", async (req, res) => {
     };
 
     const mapTransactionToRow = (tx) => {
-      const isSale = tx.type === "sale";
-      const isPayment = tx.type === "payment";
-
       let particulars = "";
       let debit = 0;
       let credit = 0;
 
-      if (isSale) {
-        const saleAmount = Number(tx.total) || computeTotalFromItems(tx.items);
-
-        debit = saleAmount;
-
+      if (tx.type === "sale") {
+        if (tx.paymentMethod === "credit") {
+          credit = tx.credit || tx.total || 0;
+        } else {
+          debit = tx.debit || tx.total || 0;
+        }
+        if (tx.paymentMethod === "split") {
+          debit = tx.debit || tx.total || 0;
+          credit = tx.credit || 0;
+        }
         particulars = tx.invoiceNo
           ? `Sale - Invoice #${tx.invoiceNo}`
           : `Sale - ID ${tx._id.toString().slice(-6)}`;
-      } else if (isPayment) {
-        const paidAmount = Number(tx.amount || tx.total || 0);
+      } else if (tx.type === "payment") {
+        if (tx.paymentMethod === "credit") {
+          credit = tx.credit || tx.amount || tx.total || 0;
+        } else {
+          debit = tx.debit || tx.amount || tx.total || 0;
+        }
 
-        credit = paidAmount;
+        if (tx.paymentMethod === "credit") {
+          particulars = tx.invoiceNo
+            ? `Credit - Invoice #${tx.invoiceNo}`
+            : `Credit Received - ID ${tx._id.toString().slice(-6)}`;
+        } else {
+          particulars = tx.invoiceNo
+            ? `Received - Invoice #${tx.invoiceNo}`
+            : `Payment Received - ID ${tx._id.toString().slice(-6)}`;
+        }
+      } else if (tx.type === "return") {
+        // ✅ RETURN IS DEBIT (WE PAY CUSTOMER)
+        debit = tx.refundAmount || tx.total || tx.debit || 0;
 
-        particulars = `Payment Received - ID ${tx._id.toString().slice(-6)}`;
-      } else {
-        particulars = `Txn - ID ${tx._id.toString().slice(-6)}`;
+        particulars = `Sale Return - ID ${tx._id.toString().slice(-6)}`;
       }
 
       return {
-        dateTime: tx.timestamp || tx.createdAt || "-",
+        dateTime: tx.createdAt,
         particulars,
-        debit:tx.debit,
-        credit:tx.credit
+        debit,
+        credit,
       };
     };
 
@@ -111,6 +126,11 @@ router.get("/download/:phone", async (req, res) => {
     // Optionally compute opening balance if your schema has it
     const openingBalance = transactions[0].openingBalance ?? 0;
     let runningBalance = Number(openingBalance || 0);
+    const formatBalance = (value) => {
+      const num = Number(value || 0);
+      const abs = Math.abs(num).toFixed(2);
+      return num < 0 ? `${abs} Dr` : `${abs} Cr`;
+    };
 
     // ---------- Layout Settings ----------
     // We'll create the first page explicitly so we can control header placement consistently
@@ -219,8 +239,7 @@ router.get("/download/:phone", async (req, res) => {
         totalDebit += r.debit;
         totalCredit += r.credit;
       });
-      const computedBalance =
-        Number(openingBalance || 0) + totalCredit;
+      const computedBalance = Number(openingBalance || 0) + totalCredit - totalDebit;
 
       const balanceLabel =
         computedBalance > 0
@@ -233,9 +252,9 @@ router.get("/download/:phone", async (req, res) => {
         .font("Helvetica")
         .fontSize(normalSize)
         .text(
-          `Current Balance: (${formatCurrency(
-            Math.abs(computedBalance)
-          )}) (${balanceLabel})`,
+          `Current Balance: ${formatBalance(
+            computedBalance
+          )} (${balanceLabel})`,
           rightBoxX + 8,
           headerTop + 24
         );
@@ -303,7 +322,7 @@ router.get("/download/:phone", async (req, res) => {
       const r = rows[i];
 
       // Compute running balance for this row (we need it to show)
-      runningBalance = runningBalance + r.credit;
+      runningBalance = runningBalance + r.credit - r.debit;
 
       // prepare fonts for measurement
       doc.font("Helvetica").fontSize(normalSize);
@@ -313,7 +332,7 @@ router.get("/download/:phone", async (req, res) => {
       const particularsText = r.particulars;
       const debitText = r.debit ? formatCurrency(r.debit) : "-";
       const creditText = r.credit ? formatCurrency(r.credit) : "-";
-      const balanceText = formatCurrency(Math.abs(runningBalance));
+      const balanceText = formatBalance(runningBalance);
 
       // measure heights using heightOfString for wrapped particulars
       const particularsEffectiveWidth = widths.particulars - 10; // small padding
@@ -446,11 +465,7 @@ router.get("/download/:phone", async (req, res) => {
     doc
       .font("Helvetica-Bold")
       .fontSize(11)
-      .text(
-        `Closing Balance: (${formatCurrency(Math.abs(runningBalance))})`,
-        left,
-        y
-      );
+      .text(`Closing Balance: ${formatBalance(runningBalance)}`, left, y);
     y += 18;
 
     doc
@@ -480,7 +495,11 @@ router.get("/download/:phone", async (req, res) => {
     doc.font("Helvetica-Bold");
     doc
       .fillColor("red")
-      .text(`Total Amount Remaining (Credit): ${formatCurrency(totalCredit)}`, left, y);
+      .text(
+        `Total Credit Turnover: ${formatCurrency(totalCredit)}`,
+        left,
+        y
+      );
 
     y += 14;
 
@@ -488,7 +507,11 @@ router.get("/download/:phone", async (req, res) => {
     doc.font("Helvetica-Bold");
     doc
       .fillColor("green")
-      .text(`Total Amount Paid (Debit): ${formatCurrency(totalDebit)}`, left, y);
+      .text(
+        `Total Debit Turnover: ${formatCurrency(totalDebit)}`,
+        left,
+        y
+      );
 
     y += 18;
     // 🔁 Reset to BLACK
@@ -538,7 +561,7 @@ router.post("/send", async (req, res) => {
       ? "92" + rawPhone.slice(1)
       : rawPhone;
 
-    const downloadUrl = `https://tahatradersbackend.vercel.app//api/ledger/download/${encodeURIComponent(
+    const downloadUrl = `https://tahatradersbackend.vercel.app/api/ledger/download/${encodeURIComponent(
       phone
     )}`;
     const capitalize = (name = "") =>
@@ -552,7 +575,7 @@ router.post("/send", async (req, res) => {
       `Assalam u Alaikum ${capitalize(
         customerName
       )}, your ledger is ready.\n\n` +
-      `Closing Balance: (${Math.abs(closingBalance).toFixed(2)})\n` +
+      `Closing Balance: ${formatBalance(closingBalance)}\n` +
       `Total Amount Remaining (Credit): ${totalCredit.toFixed(2)}\n` +
       `Total Amount Paid (Debit): ${totalDebit.toFixed(2)}\n\n` +
       `Download here: ${downloadUrl}`;

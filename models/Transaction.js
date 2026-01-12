@@ -31,7 +31,7 @@ const transactionSchema = new mongoose.Schema({
 
   paymentMethod: { 
     type: String, 
-    enum: ["cash", "online", "credit", "split"], 
+    enum: ["cash", "online", "credit", "split", "received"], 
     required: true 
   },
 

@@ -6,7 +6,9 @@ import {
   returnTransaction,
   deleteTransaction,
   getReturns,
-  getTransactionById // ✅ import delete
+  getTransactionById,
+  addPaymentAgainstInvoice,
+  addCreditAgainstInvoice, // ✅ import delete
 } from "../controllers/transactionController.js";
 import { protect, admin } from "../middleware/auth.js";
 
@@ -14,9 +16,12 @@ const router = express.Router();
 
 router.post("/", protect, createTransaction); // add new transaction
 router.post("/return", protect, returnTransaction);
+router.post("/payment", addPaymentAgainstInvoice);
+router.post("/credit", addCreditAgainstInvoice); // ✅ route for delete
 router.get("/returns", protect, getReturns); // get all returns
 router.get("/", protect, admin, getTransactions); // all transactions
 router.put("/:id", protect, admin, updateTransaction); // update transaction
+
 router.delete("/:id", protect, admin, deleteTransaction); // ✅ delete transaction
 router.get("/:id", protect, getTransactionById); // 👈 ADD THIS
 

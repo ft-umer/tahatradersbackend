@@ -145,65 +145,182 @@ export const createTransaction = async (req, res) => {
   }
 };
 
+export const addPaymentAgainstInvoice = async (req, res) => {
+  try {
+    const { invoiceNo, amount, paymentMethod = "received", customer } = req.body;
+
+    if (amount <= 0) {
+      return res.status(400).json({ message: "Invalid payment amount" });
+    }
+
+    let customerData = customer;
+    let user;
+
+    // 🔹 If invoiceNo provided → derive customer
+    if (invoiceNo) {
+      const sale = await Transaction.findOne({
+        invoiceNo,
+        type: "sale",
+      });
+
+      if (!sale) {
+        return res.status(404).json({ message: "Sale not found" });
+      }
+
+      customerData = sale.customer;
+      user = sale.user;
+    }
+
+    // 🔹 If no invoiceNo → customer is mandatory
+    if (!customerData) {
+      return res.status(400).json({ message: "Customer is required" });
+    }
+
+    const paymentTx = await Transaction.create({
+      type: "payment",
+      invoiceNo: invoiceNo || null, // optional
+      total: amount,
+      paymentMethod,
+      debit: amount,   // ✅ payment reduces balance
+      credit: 0,
+      customer: customerData,
+      user,
+    });
+
+    res.status(201).json(paymentTx);
+  } catch (err) {
+    console.error("Payment error:", err);
+    res.status(500).json({ message: "Failed to add payment" });
+  }
+};
+
+export const addCreditAgainstInvoice = async (req, res) => {
+  try {
+    const { invoiceNo, amount, customer } = req.body;
+
+    if (amount <= 0) {
+      return res.status(400).json({ message: "Invalid credit amount" });
+    }
+
+    let customerData = customer;
+    let user;
+
+    // 🔹 Invoice-based credit
+    if (invoiceNo) {
+      const sale = await Transaction.findOne({
+        invoiceNo,
+        type: "sale",
+      });
+
+      if (!sale) {
+        return res.status(404).json({ message: "Sale not found" });
+      }
+
+      customerData = sale.customer;
+      user = sale.user;
+    }
+
+    // 🔹 Customer-based credit (Trial Balance)
+    if (!customerData) {
+      return res.status(400).json({ message: "Customer is required" });
+    }
+
+    const creditTx = await Transaction.create({
+      type: "payment",
+      invoiceNo: invoiceNo || null,
+      total: amount,
+      paymentMethod: "credit",
+      debit: 0,
+      credit: amount, // ✅ customer owes
+      customer: customerData,
+      user,
+    });
+
+    res.status(201).json(creditTx);
+  } catch (err) {
+    console.error("Credit error:", err);
+    res.status(500).json({ message: "Failed to add credit" });
+  }
+};
+
+
+
+// UPDATE TRANSACTION
 export const updateTransaction = async (req, res) => {
   try {
     const { id } = req.params;
-    const { credit, debit, paymentMethod: pm, customer } = req.body;
+    const {
+      debit,
+      credit,
+      cash,
+      online,
+      paymentMethod: pm,
+      customer,
+    } = req.body;
 
     const transaction = await Transaction.findById(id);
-    if (!transaction) {
+    if (!transaction)
       return res.status(404).json({ message: "Transaction not found" });
-    }
 
-    const total = transaction.total;
+    // ✅ KEEP OLD METHOD IF NOT SENT
+    let finalPaymentMethod = pm ?? transaction.paymentMethod;
 
-    /* ------------------------------------------------
-       1️⃣ CREDIT-ONLY UPDATE (Frontend Edit Credit)
-       👉 DO NOT TOUCH ANY OTHER FIELD
-    ------------------------------------------------ */
-    if (credit !== undefined && pm === undefined && debit === undefined) {
-    
+    let finalDebit = debit !== undefined ? debit : transaction.debit;
 
-      transaction.credit = credit;
+    let finalCredit = credit !== undefined ? credit : transaction.credit;
 
-      await transaction.save();
-      return res.json({ success: true, transaction });
-    }
+    let finalCash = transaction.cash;
+    let finalOnline = transaction.online;
 
-    /* ------------------------------------------------
-       2️⃣ NORMAL PAYMENT METHOD UPDATE
-    ------------------------------------------------ */
-    let finalDebit = 0;
-    let finalCredit = 0;
-    let finalCash = 0;
-    let finalOnline = 0;
-    let finalPaymentMethod = pm;
-
+    // ❌ Prevent invalid accounting
     if ((debit || 0) > 0 && (credit || 0) > 0) {
       return res
         .status(400)
         .json({ message: "Debit and credit cannot both be greater than 0" });
     }
 
-    if (pm === "cash") {
-      finalCash = total;
-      finalDebit = total;
-    } else if (pm === "online") {
-      finalOnline = total;
-      finalDebit = total;
-    } else if (pm === "credit") {
-      finalCredit = total;
+    const total = transaction.total;
+
+    if (pm) {
+      if (pm === "split") {
+        const cashVal = cash || 0;
+        const onlineVal = online || 0;
+        const creditVal = credit || 0;
+
+        if (cashVal + onlineVal + creditVal !== total) {
+          return res.status(400).json({
+            message: "Cash + Online + Credit must equal total",
+          });
+        }
+
+        finalCash = cashVal;
+        finalOnline = onlineVal;
+        finalDebit = cashVal + onlineVal;
+        finalCredit = creditVal;
+      } else if (pm === "cash") {
+        finalCash = total;
+        finalDebit = total;
+        finalOnline = 0;
+        finalCredit = 0;
+      } else if (pm === "online") {
+        finalOnline = total;
+        finalDebit = total;
+        finalCash = 0;
+        finalCredit = 0;
+      } else if (pm === "credit") {
+        finalCredit = total;
+        finalDebit = 0;
+        finalCash = 0;
+        finalOnline = 0;
+      }
     }
 
-    // Safe customer update
+    // Update customer
     if (customer) {
-      transaction.customer = transaction.customer || {};
-      if (customer.name !== undefined)
-        transaction.customer.name = customer.name;
-      if (customer.phone !== undefined)
-        transaction.customer.phone = customer.phone;
-      if (customer.address !== undefined)
-        transaction.customer.address = customer.address;
+      transaction.customer = {
+        ...transaction.customer,
+        ...customer,
+      };
     }
 
     transaction.paymentMethod = finalPaymentMethod;
@@ -213,13 +330,13 @@ export const updateTransaction = async (req, res) => {
     transaction.online = finalOnline;
 
     await transaction.save();
-    res.json({ success: true, transaction });
+
+    res.status(200).json({ success: true, transaction });
   } catch (error) {
     console.error("Update Transaction Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 // GET SINGLE TRANSACTION BY ID
 export const getTransactionById = async (req, res) => {
@@ -243,7 +360,6 @@ export const getTransactionById = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 // GET TRANSACTIONS
 export const getTransactions = async (req, res) => {
@@ -291,100 +407,63 @@ export const returnTransaction = async (req, res) => {
   try {
     const {
       originalTransactionId,
-      items = [],
+      items,
       refundAmount,
       fullReturn,
     } = req.body;
 
-    const originalTx = await Transaction.findById(
-      originalTransactionId
-    ).populate("items.product customer");
-    if (!originalTx)
-      return res
-        .status(404)
-        .json({ message: "Original transaction not found" });
+    const originalSale = await Transaction.findById(originalTransactionId);
 
-    // Map items for return
-    const returnItems = [];
-
-    for (let ri of items) {
-      // Find sold item in original transaction
-      const soldItem = originalTx.items.find((i) => {
-        const originalId = i.product?._id
-          ? i.product._id.toString()
-          : i.product.toString();
-        const returnId = ri.product.toString(); // frontend ID as string
-        return originalId === returnId;
-      });
-
-      if (!soldItem) {
-        console.log(
-          "OriginalTx items IDs:",
-          originalTx.items.map(
-            (i) => i.product?._id?.toString() || i.product.toString()
-          )
-        );
-        console.log("Returned item ID:", ri.product);
-        throw new Error(`Product ${ri.product} not found in original sale`);
-      }
-
-      // Save item with price
-      returnItems.push({
-        product: ri.product,
-        quantity: ri.quantity,
-        price: soldItem.price,
-      });
-
-      // Reduce quantity in original transaction
-      soldItem.quantity -= ri.quantity;
-
-      // Restore stock
-      await Product.findByIdAndUpdate(ri.product, {
-        $inc: { stock: ri.quantity },
-      });
+    if (!originalSale || originalSale.type !== "sale") {
+      return res.status(404).json({ message: "Original sale not found" });
     }
 
-    // Remove items with 0 quantity
-    originalTx.items = originalTx.items.filter((i) => i.quantity > 0);
+    // ✅ CREATE A NEW TRANSACTION (IMPORTANT)
+    const returnTxn = await Transaction.create({
+      type: "return",
 
-    // Recalculate totals
-    originalTx.total = originalTx.items.reduce(
-      (sum, i) => sum + i.price * i.quantity,
-      0
-    );
-    if (originalTx.paymentMethod === "cash") {
-      originalTx.debit = originalTx.total;
-      originalTx.credit = 0;
-    } else {
-      originalTx.credit = originalTx.total;
-      originalTx.debit = 0;
-    }
+      originalTransactionId: originalSale._id,
 
-    await originalTx.save();
+      items: items.map(i => ({
+        product: i.product,
+        quantity: i.quantity,
+        price:
+          originalSale.items.find(oi => oi.product.toString() === i.product)
+            ?.price || 0,
+      })),
 
-    // Save return record
-    const returnRecord = await Return.create({
-      originalTransactionId,
-      items: returnItems,
-      customer: originalTx.customer || null, // now saves name + phone
+      total: refundAmount,
       refundAmount,
       fullReturn,
-      user: originalTx.customer?._id || null,
+
+      // 🔴 RETURN IS DEBIT (WE PAY CUSTOMER)
+      debit: refundAmount,
+      credit: 0,
+
+      paymentMethod: "cash", // or "received" / "online"
+
+      customer: {
+        id: originalSale.customer.id,
+        name: originalSale.customer.name,
+        phone: originalSale.customer.phone,
+        address: originalSale.customer.address,
+      },
+
+      user: req.user._id,
     });
 
-    res.status(200).json({
-      success: true,
-      message: fullReturn
-        ? "Full return processed"
-        : "Partial return processed",
-      returnRecord,
-      refundAmount,
-      fullReturn,
+    // ❌ DO NOT MODIFY originalSale
+    // ❌ DO NOT UPDATE debit/credit of originalSale
+
+    res.status(201).json({
+      message: fullReturn ? "Full return processed" : "Partial return processed",
+      returnTransaction: returnTxn,
     });
   } catch (err) {
-    console.error("Return Transaction Error:", err);
-    res.status(500).json({ message: err.message || "Server error" });
+    console.error("Return error:", err);
+    res.status(500).json({ message: "Return failed" });
   }
+
 };
 
 // DELETE TRANSACTION
