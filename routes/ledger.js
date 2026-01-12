@@ -4,6 +4,12 @@ import PDFDocument from "pdfkit";
 
 const router = express.Router();
 
+const formatBalance = (value) => {
+  const num = Number(value || 0);
+  const abs = Math.abs(num).toFixed(2);
+  return num < 0 ? `${abs} Dr` : `${abs} Cr`;
+};
+
 /**
  * Assumptions:
  * - Each Transaction document represents either a sale or a payment.
@@ -126,11 +132,6 @@ router.get("/download/:phone", async (req, res) => {
     // Optionally compute opening balance if your schema has it
     const openingBalance = transactions[0].openingBalance ?? 0;
     let runningBalance = Number(openingBalance || 0);
-    const formatBalance = (value) => {
-      const num = Number(value || 0);
-      const abs = Math.abs(num).toFixed(2);
-      return num < 0 ? `${abs} Dr` : `${abs} Cr`;
-    };
 
     // ---------- Layout Settings ----------
     // We'll create the first page explicitly so we can control header placement consistently
@@ -239,7 +240,8 @@ router.get("/download/:phone", async (req, res) => {
         totalDebit += r.debit;
         totalCredit += r.credit;
       });
-      const computedBalance = Number(openingBalance || 0) + totalCredit - totalDebit;
+      const computedBalance =
+        Number(openingBalance || 0) + totalCredit - totalDebit;
 
       const balanceLabel =
         computedBalance > 0
@@ -495,11 +497,7 @@ router.get("/download/:phone", async (req, res) => {
     doc.font("Helvetica-Bold");
     doc
       .fillColor("red")
-      .text(
-        `Total Credit Turnover: ${formatCurrency(totalCredit)}`,
-        left,
-        y
-      );
+      .text(`Total Credit Turnover: ${formatCurrency(totalCredit)}`, left, y);
 
     y += 14;
 
@@ -507,11 +505,7 @@ router.get("/download/:phone", async (req, res) => {
     doc.font("Helvetica-Bold");
     doc
       .fillColor("green")
-      .text(
-        `Total Debit Turnover: ${formatCurrency(totalDebit)}`,
-        left,
-        y
-      );
+      .text(`Total Debit Turnover: ${formatCurrency(totalDebit)}`, left, y);
 
     y += 18;
     // 🔁 Reset to BLACK
