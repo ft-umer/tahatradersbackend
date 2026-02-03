@@ -383,17 +383,12 @@ export const getTransactions = async (req, res) => {
   }
 };
 
+
 export const getReturns = async (req, res) => {
   try {
-    const returns = await Return.find()
-      .populate({
-        path: "user",
-        select: "name phone", // original buyer info
-      })
-      .populate({
-        path: "items.product",
-        select: "name price",
-      })
+    const returns = await Transaction.find({ type: "return" })
+      .populate("items.product", "name price")
+      .populate("user", "name phone")
       .sort({ createdAt: -1 });
 
     res.json({ success: true, returns });
@@ -403,14 +398,10 @@ export const getReturns = async (req, res) => {
   }
 };
 
+
 export const returnTransaction = async (req, res) => {
   try {
-    const {
-      originalTransactionId,
-      items,
-      refundAmount,
-      fullReturn,
-    } = req.body;
+    const { originalTransactionId, items, refundAmount, fullReturn } = req.body;
 
     const originalSale = await Transaction.findById(originalTransactionId);
 
@@ -421,14 +412,14 @@ export const returnTransaction = async (req, res) => {
     // ✅ CREATE A NEW TRANSACTION (IMPORTANT)
     const returnTxn = await Transaction.create({
       type: "return",
-
+      invoiceNo: originalSale.invoiceNo,
       originalTransactionId: originalSale._id,
 
-      items: items.map(i => ({
+      items: items.map((i) => ({
         product: i.product,
         quantity: i.quantity,
         price:
-          originalSale.items.find(oi => oi.product.toString() === i.product)
+          originalSale.items.find((oi) => oi.product.toString() === i.product)
             ?.price || 0,
       })),
 
@@ -452,19 +443,50 @@ export const returnTransaction = async (req, res) => {
       user: req.user._id,
     });
 
+    // 🔁 RESTORE STOCK ON RETURN
+    for (const item of items) {
+      await Product.findByIdAndUpdate(item.product, {
+        $inc: { stock: item.quantity },
+      });
+    }
+
+ /* ---------------- UPDATE ORIGINAL SALE ITEMS ---------------- */
+    originalSale.items = originalSale.items
+      .map((saleItem) => {
+        const returnedItem = items.find(
+          (ri) => ri.product === saleItem.product.toString()
+        );
+
+        if (!returnedItem) return saleItem;
+
+        return {
+          ...saleItem.toObject(),
+          quantity: saleItem.quantity - returnedItem.quantity,
+        };
+      })
+      .filter((item) => item.quantity > 0); // remove zero qty items
+
+    /* OPTIONAL: mark sale as fully returned */
+    if (fullReturn || originalSale.items.length === 0) {
+      originalSale.status = "returned"; // only if you have this field
+    }
+  await originalSale.save();
+
     // ❌ DO NOT MODIFY originalSale
     // ❌ DO NOT UPDATE debit/credit of originalSale
 
     res.status(201).json({
-      message: fullReturn ? "Full return processed" : "Partial return processed",
+      message: fullReturn
+        ? "Full return processed"
+        : "Partial return processed",
       returnTransaction: returnTxn,
     });
   } catch (err) {
     console.error("Return error:", err);
     res.status(500).json({ message: "Return failed" });
   }
-
 };
+
 
 // DELETE TRANSACTION
 export const deleteTransaction = async (req, res) => {

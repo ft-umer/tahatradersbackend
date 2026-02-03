@@ -3,7 +3,7 @@ import Customer from '../models/Customer.js'; // match the exact filename
 // GET /api/customers
 export const getCustomers = async (req, res) => {
   try {
-    const customers = await Customer.find().sort({ createdAt: -1 });
+    const customers = await Customer.find({role:{$ne: "walkIn"}}).sort({ createdAt: -1 });
     res.json(customers);
   } catch (err) {
     console.error(err);
@@ -17,9 +17,14 @@ export const createCustomer = async (req, res) => {
   if (!name || !phone) {
     return res.status(400).json({ message: 'Name and Phone are required' });
   }
-
-  try {
-    const newCustomer = new Customer({ name, phone, address });
+ try {
+    const customerRole = (name == "walk-in-customer") ? "walkIn" : "customer"
+    const newCustomer = new Customer({
+      name,
+      phone,
+      address,
+      role: customerRole,
+    });
     await newCustomer.save();
     res.status(201).json(newCustomer);
   } catch (err) {
@@ -38,9 +43,10 @@ export const updateCustomer = async (req, res) => {
   }
 
   try {
+     const customerRole = (name == "walk-in-customer") ? "walkIn" : "customer"
     const customer = await Customer.findByIdAndUpdate(
       id,
-      { name, phone, address },
+      { name, phone, address, role:customerRole },
       { new: true }
     );
     if (!customer) return res.status(404).json({ message: 'Customer not found' });
@@ -62,4 +68,10 @@ export const deleteCustomer = async (req, res) => {
     console.error(err);
     res.status(500).json({ message: 'Failed to delete customer' });
   }
+};
+
+
+export const getWalkInCustomer = async (req, res) => {
+  const walkIn = await Customer.findOne({ role: "walkIn" });
+  res.json(walkIn);
 };
