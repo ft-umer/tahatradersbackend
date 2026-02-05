@@ -487,6 +487,41 @@ export const returnTransaction = async (req, res) => {
   }
 };
 
+export const getStockMovements = async (req, res) => {
+  try {
+    const transactions = await Transaction.find({
+      type: { $in: ["sale", "return"] },
+    })
+      .populate("items.product", "name")
+      .sort({ createdAt: -1 })
+      .limit(30);
+
+    const movements = [];
+
+    for (const tx of transactions) {
+      for (const item of tx.items) {
+        if (!item.product) continue;
+
+        movements.push({
+          _id: tx._id,
+          invoiceNo: tx.invoiceNo || `RETURN-ID ${tx._id.toString().slice(-6)}`,
+          product: item.product.name,
+          quantity:
+            tx.type === "sale"
+              ? -item.quantity
+              : +item.quantity,
+          type: tx.type,
+          date: tx.createdAt,
+        });
+      }
+    }
+
+    res.json({ success: true, movements });
+  } catch (err) {
+    console.error("Stock movement error:", err);
+    res.status(500).json({ message: "Failed to load stock movements" });
+  }
+};
 
 // DELETE TRANSACTION
 export const deleteTransaction = async (req, res) => {
