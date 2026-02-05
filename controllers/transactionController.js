@@ -2,6 +2,7 @@ import express from "express";
 import Transaction from "../models/Transaction.js";
 import Product from "../models/Product.js";
 import Return from "../models/Return.js";
+import Unit from "../models/Unit.js";
 
 // Helper to generate invoice numbers
 function generateInvoiceNo() {
@@ -492,10 +493,34 @@ export const getStockMovements = async (req, res) => {
     const transactions = await Transaction.find({
       type: { $in: ["sale", "return"] },
     })
-      .populate("items.product", "name")
+      .populate("items.product", "name unit")
       .sort({ createdAt: -1 })
       .limit(30);
 
+    /* 1️⃣ Collect unit IDs */
+    const unitIds = new Set();
+
+    transactions.forEach((tx) => {
+      tx.items.forEach((item) => {
+        if (item.product?.unit) {
+          unitIds.add(item.product.unit);
+        }
+      });
+    });
+
+    /* 2️⃣ Fetch units */
+    const units = await Unit.find(
+      { _id: { $in: [...unitIds] } },
+      "name"
+    );
+
+    /* 3️⃣ Map unitId → unitName */
+    const unitMap = {};
+    units.forEach((u) => {
+      unitMap[u._id.toString()] = u.name;
+    });
+
+    /* 4️⃣ Build movements */
     const movements = [];
 
     for (const tx of transactions) {
@@ -504,14 +529,14 @@ export const getStockMovements = async (req, res) => {
 
         movements.push({
           _id: tx._id,
-          invoiceNo: tx.invoiceNo || `RETURN-ID ${tx._id.toString().slice(-6)}`,
+          invoiceNo:
+            tx.invoiceNo || `RETURN-ID ${tx._id.toString().slice(-6)}`,
           product: item.product.name,
           quantity:
-            tx.type === "sale"
-              ? -item.quantity
-              : +item.quantity,
+            tx.type === "sale" ? -item.quantity : item.quantity,
           type: tx.type,
           date: tx.createdAt,
+          unit: unitMap[item.product.unit] || "", // ✅ unit NAME
         });
       }
     }
